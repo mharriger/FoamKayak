@@ -11,15 +11,36 @@ rcParams['font.family'] = 'serif'
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import math
+from TableOfOffsets import TableOfOffsets
+import json
+import pyransac3d as pyrsc
 
 stations = np.loadtxt('SeaBeeStations.csv', delimiter=',')
 chinesY = np.loadtxt('SeaBeeHB.csv', delimiter=',')
 chinesZ = np.loadtxt('SeaBeeHAB.csv', delimiter=',')
 
-chine3d = np.array((stations[1:-1], chinesY, chinesZ))
+#chine3d = np.array((stations[1:-1], chinesY, chinesZ))
+offsets = TableOfOffsets(
+    stations=list(stations),
+    keel=list((None,) * len(stations)),
+    chines=[[[chinesY[i][j], chinesZ[i][j]] for j in range(len(chinesY[0]))] for i in range(len(chinesY))],
+    gunwale=list((None,) * len(stations)),
+    deckridge=list((None,) * len(stations))
+    )
 
-fig, axes = plt.subplots(nrows=3, ncols=1, sharex=True,
-                                    figsize=(6, 12))
+fig = plt.figure()
+subfigs = fig.subfigures(1, 2, wspace=0.07)
+
+axsLeft = subfigs[0].subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
+                         width_ratios=[1])
+
+axsRight = subfigs[1].subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
+
+for frame in offsets.frames:
+    for centroid in frame:
+        print(centroid)
+        axsRight.plot(*centroid, 'bo')
+
 
 # https://stackoverflow.com/questions/28910718/give-3-points-and-a-plot-circle
 def define_circle(p1, p2, p3):
@@ -72,29 +93,46 @@ def intersect_x_axis_circle(c, r):
 
 for idx in range(len(chinesY)):
     chineY = chinesY[idx]
-    chineZ = chinesY[idx]
+    chineZ = chinesZ[idx]
     print(chineY, chineZ)
+    
+    points = np.array([[stations[i], chineY[i], chineZ[i]] for i in range(len(stations))])
+
     ##### Begin plane fitting. TODO: A more accurate best fit
     # Pick 3 points
-    p0 = np.array((stations[1], chineY[0], chineZ[0]))
-    p1 = np.array((stations[3], chineY[2], chineZ[2]))
-    p2 = np.array((stations[5], chineY[4], chineZ[4]))
+    p0 = np.array((stations[0], chineY[0], chineZ[0]))
+    p1 = np.array((stations[2], chineY[2], chineZ[2]))
+    p2 = np.array((stations[4], chineY[4], chineZ[4]))
+
+    plane1 = pyrsc.Plane()
+    best_eq, best_inliers = plane1.fit(points, 0.01)
+
+    print('RANSAC results: ', best_eq, best_inliers)
+
+    normal = best_eq[0:3]
+    zo = best_eq[2] / best_eq[3]
+    po = np.array((0,0,zo))
 
     # Define the plane containing those points
-    point, normal = plane3points(p0, p1, p2)
+    point, normal_old = plane3points(p0, p1, p2)
     unit_normal = normal / np.linalg.norm(normal)
+    unit_normal_old = normal_old / np.linalg.norm(normal_old)
 
     ##### End plane fitting
 
-    ##### Create a local coordinate system for the plant
+    print(unit_normal, unit_normal_old)
+
+    ##### Create a local coordinate system for the plane
     #x-axis of local coordinate system = intersection of XZ plane with local plane
     #z value at x=0, y=0
-    d = -1 * (normal[0] * p2[0] + normal[1] * p2[1] + normal[2] * p2[2])
-    zo = d/(-1 * normal[2])
-    po = np.array((0, 0, zo))
+    #d = -1 * (normal[0] * po[0] + normal[1] * po[1] + normal[2] * po[2])
+    #zo = d/(-1 * normal[2])
+    #print (zo)
+    #po = np.array((0, 0, zo))
 
     # Another point on the X axis, x=100, y = 0
-    z100 = ((normal[0] * 100) + d)/(-1 * normal[2])
+    #z100 = ((normal[0] * 100) + d)/(-1 * normal[2])
+    z100 = (100 * best_eq[0] + best_eq[2]) / best_eq[3]
 
     #Local x axis
     xl = np.array([100, 0, z100]) - po
@@ -110,8 +148,8 @@ for idx in range(len(chinesY)):
     #TODO: Find nearest point on plane to actual point. Not sure what this actually gives although it looks close
     twodpoints = []
     for i in range(len(chineY)):
-        point = np.array((stations[i+1],chineY[i],chineZ[i]))
-        twodpoints.append(global_to_local(point, po, xl, yl))
+        centroid = np.array((stations[i],chineY[i],chineZ[i]))
+        twodpoints.append(global_to_local(centroid, po, xl, yl))
 
     ### Find circle through the three translated points
     c, r = define_circle(twodpoints[0], twodpoints[math.ceil(len(twodpoints) / 2.0)], twodpoints[-1])
@@ -129,8 +167,11 @@ for idx in range(len(chinesY)):
     twodstations = []
     for x in stations[1:-1]:
         zl = (normal[0] * x + d)/(-normal[2])
-        twodstations.append(np.array((global_to_local(po, np.array((-x, 0, zl)), xl, yl), global_to_local(po, np.array((-x, 0, zl)) - station_vec, xl, yl) * np.array((1, -100)))))
-
+        twodstations.append(np.array((
+            global_to_local(po, np.array((-x, 0, zl)), xl, yl),
+            global_to_local(po, np.array((-x, 0, zl)) - station_vec, xl, yl) * np.array((1, -100))
+        )))
+    print(twodstations)
     # Adjust other chine points to intersection of station plane with chine arc
 
     # Calculate starting point and angle of arc
@@ -141,19 +182,17 @@ for idx in range(len(chinesY)):
 
     c0 = np.array((ix1, 0))
 
-    d = -point.dot(normal)
-    xx, yy = np.meshgrid(range(500), range(20))
-    z = (-normal[0] * xx - normal[1] * yy - d) * 1. / normal[2]
-
     ##### 2D plot of chine
-    ax = axes[idx]
+    ax = axsLeft[idx]
+    ax.set_box_aspect(1/10)
+    ax.set_ylim((0, 40))
     ax.plot(*zip(*twodpoints), 'ro')
     #ax.plot(*zip(p0a, p1a, p2a), 'ro')
     for station in twodstations:
         ax.plot(*zip(*station), 'g')
     ax.plot([ix1, ix2], [0, 0], 'ro')
-    ax.set_xlim(-10, 500)
-    ax.set_ylim(-5, 20)
+    ax.set_xlim(-10, 400)
+    #ax.set_ylim(-5, 40)
     ax.set_xlabel('$x$ (cm)',fontsize=16)
     ax.set_ylabel('\n$y$ (cm)',fontsize=16)
     ax.grid(True, which='both')
@@ -165,6 +204,16 @@ for idx in range(len(chinesY)):
     arc_ys = (r * np.sin(arc_angles)) + c[1]
     ax.plot(arc_xs, arc_ys, color = 'c', lw = 3)
 
+    #3D
+    for centroid in twodpoints:
+        print(local_to_global(centroid, po, xl, yl))
+        axsRight.plot(*local_to_global(centroid, po, xl, yl), 'ro')
+    axsRight.plot(*local_to_global((ix1, 0), po, xl, yl), 'ro')
+    axsRight.plot(*local_to_global((ix2, 0), po, xl, yl), 'ro')
+
+
+axsRight.set_aspect('equal')
+plt.show()
 
 #   3D plot 
 #fig = plt.figure()
