@@ -12,8 +12,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import math
 from TableOfOffsets import TableOfOffsets
-import json
 import pyransac3d as pyrsc
+import Geometry3D
 
 stations = np.loadtxt('SeaBeeStations.csv', delimiter=',')
 chinesY = np.loadtxt('SeaBeeHB.csv', delimiter=',')
@@ -28,18 +28,19 @@ offsets = TableOfOffsets(
     deckridge=list((None,) * len(stations))
     )
 
-fig = plt.figure()
-subfigs = fig.subfigures(1, 2, wspace=0.07)
+fig2d = plt.figure()
+fig3d = plt.figure()
 
-axsLeft = subfigs[0].subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
+axs2d = fig2d.subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
                          width_ratios=[1])
 
-axsRight = subfigs[1].subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
+axsBottom = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
+fig3d.tight_layout()
 
 for frame in offsets.frames:
     for centroid in frame:
         print(centroid)
-        axsRight.plot(*centroid, 'bo')
+        axsBottom.plot(*centroid, 'bo')
 
 
 # https://stackoverflow.com/questions/28910718/give-3-points-and-a-plot-circle
@@ -91,6 +92,33 @@ def intersect_planes(point, normal1, normal2):
 def intersect_x_axis_circle(c, r):
     return c[0] - math.sqrt(r**2 - c[1]**2), c[0] + math.sqrt(r**2 - c[1]**2)
 
+def make_coordinate_system(point, normal):
+    unit_normal = normal / np.linalg.norm(normal)
+    d = -1 * (normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2])
+    zo = d/(-1 * normal[2])
+    print (zo)
+    po = np.array((0, 0, zo))
+
+    # Another point on the X axis, x=100, y = 0
+    z100 = ((normal[0] * 100) + d)/(-1 * normal[2])
+    #z100 = (100 * best_eq[0] + best_eq[2]) / best_eq[3]
+
+    #Local x axis
+    xl = np.array([100, 0, z100]) - po
+    xl = xl / np.linalg.norm(xl) 
+
+    #Local y axis
+    yl = np.cross(xl, unit_normal)
+    yl = yl / np.linalg.norm(yl)
+
+    return po, xl, yl
+
+def intersect_plane_circle(c, r, c_normal, p, p_normal):
+    # Make a local coordinate system (LCS)
+    po, xl, yl = make_coordinate_system(c, c_normal)
+
+
+
 for idx in range(len(chinesY)):
     chineY = chinesY[idx]
     chineZ = chinesZ[idx]
@@ -104,45 +132,29 @@ for idx in range(len(chinesY)):
     p1 = np.array((stations[2], chineY[2], chineZ[2]))
     p2 = np.array((stations[4], chineY[4], chineZ[4]))
 
-    plane1 = pyrsc.Plane()
-    best_eq, best_inliers = plane1.fit(points, 0.01)
+    circle1 = pyrsc.Circle()
+    center, axis, radius, inliers = circle1.fit(points, 1)
+    normal = axis
 
-    print('RANSAC results: ', best_eq, best_inliers)
+    print('RANSAC results: ', axis, radius, center, inliers)
 
-    normal = best_eq[0:3]
-    zo = best_eq[2] / best_eq[3]
-    po = np.array((0,0,zo))
-
-    # Define the plane containing those points
+#    # Define the plane containing those points
     point, normal_old = plane3points(p0, p1, p2)
-    unit_normal = normal / np.linalg.norm(normal)
+#    unit_normal = normal / np.linalg.norm(normal)
+    unit_normal = axis / np.linalg.norm(axis)
     unit_normal_old = normal_old / np.linalg.norm(normal_old)
 
-    ##### End plane fitting
-
+    chine_plane = Geometry3D.Plane(Geometry3D.Point(center[0], center[1], center[2]), Geometry3D.Vector(unit_normal[0], unit_normal[1], unit_normal[2]))
+    print ("chine plane parameters:", chine_plane.parametric())
+#    ##### End plane fitting
+#
     print(unit_normal, unit_normal_old)
-
+#
     ##### Create a local coordinate system for the plane
-    #x-axis of local coordinate system = intersection of XZ plane with local plane
-    #z value at x=0, y=0
-    #d = -1 * (normal[0] * po[0] + normal[1] * po[1] + normal[2] * po[2])
-    #zo = d/(-1 * normal[2])
-    #print (zo)
-    #po = np.array((0, 0, zo))
+    po, xl, yl = make_coordinate_system(center, axis)
 
-    # Another point on the X axis, x=100, y = 0
-    #z100 = ((normal[0] * 100) + d)/(-1 * normal[2])
-    z100 = (100 * best_eq[0] + best_eq[2]) / best_eq[3]
-
-    #Local x axis
-    xl = np.array([100, 0, z100]) - po
-    xl = xl / np.linalg.norm(xl) 
-
-    #Local y axis
-    yl = np.cross(xl, unit_normal)
-    yl = yl / np.linalg.norm(yl)
-
-    ##### End create LCS
+    local_center = global_to_local(center, po, xl, yl)
+    ix1, ix2 = intersect_x_axis_circle(local_center, radius)
 
     ##### Convert all of the points on this chine to the LCS
     #TODO: Find nearest point on plane to actual point. Not sure what this actually gives although it looks close
@@ -160,36 +172,44 @@ for idx in range(len(chinesY)):
     print("global center: ", C)
 
     # Determine station locations as lines on the chine plane
+    for x in stations:
+        station_plane = Geometry3D.Plane(Geometry3D.Point(x, 0, 0), Geometry3D.Vector(1, 0, 0))
+        station_line = station_plane.intersection(chine_plane)
+        so = station_line.intersection(Geometry3D.Plane.xz_plane())
+        print("Station Origin ", so)
+        print("Station Origin Local ", global_to_local(np.array((so.x, so.y, so.z)), po, xl, yl))
+        #TODO: How to intersect line with circle (do it in LCS?). Geometry3D circle is actually a bunch of segments.
+        # Also, how to plot chine line on chine plane diagram
+    
     nyz = np.array((1, 0, 0))
     station_vec = nyz * unit_normal
     print("station_vec:", station_vec)
 
-    twodstations = []
-    for x in stations[1:-1]:
-        zl = (normal[0] * x + d)/(-normal[2])
-        twodstations.append(np.array((
-            global_to_local(po, np.array((-x, 0, zl)), xl, yl),
-            global_to_local(po, np.array((-x, 0, zl)) - station_vec, xl, yl) * np.array((1, -100))
-        )))
-    print(twodstations)
+#    twodstations = []
+#    for x in stations[1:-1]:
+#        zl = (normal[0] * x + d)/(-normal[2])
+#        twodstations.append(np.array((
+#            global_to_local(po, np.array((-x, 0, zl)), xl, yl),
+#            global_to_local(po, np.array((-x, 0, zl)) - station_vec, xl, yl) * np.array((1, -100))
+#        )))
+#    print(twodstations)
     # Adjust other chine points to intersection of station plane with chine arc
 
     # Calculate starting point and angle of arc
     # Starts and ends at points circle intersects local X axis
-    ix1, ix2 = intersect_x_axis_circle(c, r)
-
     print("ix1, ix2:",ix1,ix2)
 
     c0 = np.array((ix1, 0))
 
+
     ##### 2D plot of chine
-    ax = axsLeft[idx]
+    ax = axs2d[idx]
     ax.set_box_aspect(1/10)
     ax.set_ylim((0, 40))
-    ax.plot(*zip(*twodpoints), 'ro')
+#    ax.plot(*zip(*twodpoints), 'ro')
     #ax.plot(*zip(p0a, p1a, p2a), 'ro')
-    for station in twodstations:
-        ax.plot(*zip(*station), 'g')
+#    for station in twodstations:
+#        ax.plot(*zip(*station), 'g')
     ax.plot([ix1, ix2], [0, 0], 'ro')
     ax.set_xlim(-10, 400)
     #ax.set_ylim(-5, 40)
@@ -199,21 +219,27 @@ for idx in range(len(chinesY)):
     ax.set_aspect('equal')
 
     #draw arc
-    arc_angles = np.linspace(np.arccos((ix1 - c[0])/r), np.arccos((ix2 - c[0])/r), 2000)
-    arc_xs = (r * np.cos(arc_angles)) + c[0]
-    arc_ys = (r * np.sin(arc_angles)) + c[1]
+    arc_angles = np.linspace(np.arccos((ix1 - local_center[0])/radius), np.arccos((ix2 - local_center[0])/radius), 2000)
+    arc_xs = (radius * np.cos(arc_angles)) + local_center[0]
+    arc_ys = (radius * np.sin(arc_angles)) - abs(local_center[1])
     ax.plot(arc_xs, arc_ys, color = 'c', lw = 3)
 
-    #3D
-    for centroid in twodpoints:
-        print(local_to_global(centroid, po, xl, yl))
-        axsRight.plot(*local_to_global(centroid, po, xl, yl), 'ro')
-    axsRight.plot(*local_to_global((ix1, 0), po, xl, yl), 'ro')
-    axsRight.plot(*local_to_global((ix2, 0), po, xl, yl), 'ro')
+#    #3D
+#    for centroid in twodpoints:
+#        print(local_to_global(centroid, po, xl, yl))
+#        axsRight.plot(*local_to_global(centroid, po, xl, yl), 'ro')
+#    axsRight.plot(*local_to_global((ix1, 0), po, xl, yl), 'ro')
+#    axsRight.plot(*local_to_global((ix2, 0), po, xl, yl), 'ro')
+#
+#
+    for station_x in offsets._stations:
+        station_plane = plane3points(np.array((station_x, 0, 0)), np.array((station_x, 100, 0)), np.array((station_x, 0, 100)))
 
 
-axsRight.set_aspect('equal')
+
+axsBottom.set_aspect('equal')
 plt.show()
+
 
 #   3D plot 
 #fig = plt.figure()
