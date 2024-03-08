@@ -9,10 +9,8 @@ import numpy as np
 from matplotlib import rcParams
 rcParams['font.family'] = 'serif'
 import matplotlib.pyplot as plt
-import math
 from TableOfOffsets import TableOfOffsets
 import skspatial.objects as skso
-from skspatial.plotting import plot_3d
 
 stations = np.loadtxt('SeaBeeStations.csv', delimiter=',')
 chinesY = np.loadtxt('SeaBeeHB.csv', delimiter=',')
@@ -35,32 +33,23 @@ axs2d = fig2d.subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
 axs3d = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
 fig3d.tight_layout()
 
-def global_to_local(point, origin, u, v):
+def global_to_local(point: skso.Point, origin: skso.Point, u: skso.Vector, v: skso.Vector) -> skso.Point:
     return np.dot((point - origin), u), np.dot((point - origin), v)
 
-def local_to_global(point, origin, u, v):
+def local_to_global(point: skso.Point, origin: skso.Point, u: skso.Vector, v: skso.Vector) -> skso.Point:
     return origin + point[0] * u + point[1] * v
 
-def make_coordinate_system(point, normal):
-    chine_plane.normal.unit = normal / np.linalg.norm(normal)
-    d = -1 * (normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2])
-    zo = d/(-1 * normal[2])
-    print (zo)
-    po = np.array((0, 0, zo))
+def make_coordinate_system(plane: skso.Plane) -> tuple[skso.Point, skso.Vector, skso.Vector]:
+    # Origin = intersection of chine plane and z-axis
+    po = plane.intersect_line(skso.Line([0,0,0], [0,0,1]))
 
-    # Another point on the X axis, x=100, y = 0
-    z100 = ((normal[0] * 100) + d)/(-1 * normal[2])
-    #z100 = (100 * best_eq[0] + best_eq[2]) / best_eq[3]
-
-    #Local x axis
-    xl = np.array([100, 0, z100]) - po
-    xl = xl / np.linalg.norm(xl) 
+    # Local x axis = intersection of chine plane and XZ plane
+    xl = plane.intersect_plane(skso.Plane([0,0,0], normal=[0,-1,0]))
 
     #Local y axis
-    yl = np.cross(xl, chine_plane.normal.unit)
-    yl = yl / np.linalg.norm(yl)
+    yl = skso.Vector(np.cross(xl.direction.unit(), plane.normal.unit()))
 
-    return po, xl, yl
+    return po, xl.direction.unit(), yl.unit()
 
 for idx in range(len(chinesY)):
     chineY = chinesY[idx]
@@ -68,28 +57,28 @@ for idx in range(len(chinesY)):
 
     points = skso.Points([[stations[i], chineY[i], chineZ[i]] for i in range(len(stations))])
 
-    ##### Begin plane fitting
-
+    ##### Find the best-fit plane
     chine_plane = skso.Plane.best_fit(points)
 
-    ##### End plane fitting
-
     ##### Create a local coordinate system for the plane
-    po, xl, yl = make_coordinate_system(chine_plane.point, chine_plane.normal)
+    local_coords = make_coordinate_system(chine_plane)
 
-    ##### Convert all of the points on this chine to the LCS
+    ##### Project the station lines and all of the points on this chine to the plane
     twodstations = [chine_plane.intersect_plane(skso.Plane(point=[x,0,0], normal=[1,0,0])) for x in stations]
     threedpoints = chine_plane.project_points(points)
-    twodpoints = skso.Points([global_to_local(point, po, xl, yl) for point in threedpoints])
+    twodpoints = skso.Points([global_to_local(skso.Point(point), *local_coords) for point in threedpoints])
 
+    ##### Find the circle that best fits the projected points
     circle = skso.Circle.best_fit(twodpoints)
     local_center = circle.point
     radius = circle.radius
 
+    ##### Project the 2D points to the circle, then reproject back to 3D space
     points_on_circle = skso.Points([circle.project_point(pt) for pt in twodpoints])
-    points_on_circle_3d = skso.Points([local_to_global(pt, po, xl, yl) for pt in points_on_circle])
+    points_on_circle_3d = skso.Points([local_to_global(pt, *local_coords) for pt in points_on_circle])
 
-    center = local_to_global(local_center, po, xl, yl)
+    ##### Find the chine arc endpoints
+    center = local_to_global(local_center, *local_coords)
     ix1, ix2 = circle.intersect_line(skso.Line([0,0], [1,0]))
 
     ##### 2D plot of chine
@@ -125,7 +114,7 @@ for idx in range(len(chinesY)):
     print("-" * 10, "Chine", idx, "-" * 10)
     print(chine_plane.normal)
     print(points)
-    print(threedpoints)
+    print(points_on_circle_3d)
     print([skso.Point(x[0]).distance_point(skso.Point(x[1])) for x in zip(points, points_on_circle_3d)])
 
 axs3d.set_aspect('equal')
