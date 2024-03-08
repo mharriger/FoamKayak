@@ -126,7 +126,7 @@ for idx in range(len(chinesY)):
     print(chine_plane.normal)
     print(points)
     print(threedpoints)
-    print (points - points_on_circle_3d)
+    print([skso.Point(x[0]).distance_point(skso.Point(x[1])) for x in zip(points, points_on_circle_3d)])
 
 axs3d.set_aspect('equal')
 plt.show()
