@@ -38,12 +38,6 @@ axs2d = fig2d.subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
 axs3d = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
 fig3d.tight_layout()
 
-for frame in offsets.frames:
-    for centroid in frame:
-        #print(centroid)
-        axs3d.plot(*centroid, 'bo')
-
-
 # https://stackoverflow.com/questions/28910718/give-3-points-and-a-plot-circle
 def define_circle(p1, p2, p3):
     """
@@ -94,7 +88,7 @@ def intersect_x_axis_circle(c, r):
     return c[0] - math.sqrt(r**2 - c[1]**2), c[0] + math.sqrt(r**2 - c[1]**2)
 
 def make_coordinate_system(point, normal):
-    unit_normal = normal / np.linalg.norm(normal)
+    chine_plane.normal.unit = normal / np.linalg.norm(normal)
     d = -1 * (normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2])
     zo = d/(-1 * normal[2])
     print (zo)
@@ -109,7 +103,7 @@ def make_coordinate_system(point, normal):
     xl = xl / np.linalg.norm(xl) 
 
     #Local y axis
-    yl = np.cross(xl, unit_normal)
+    yl = np.cross(xl, chine_plane.normal.unit)
     yl = yl / np.linalg.norm(yl)
 
     return po, xl, yl
@@ -126,58 +120,33 @@ for idx in range(len(chinesY)):
     print(chineY, chineZ)
     
     points = skso.Points([[stations[i], chineY[i], chineZ[i]] for i in range(len(stations))])
+    points.plot_3d(axs3d, c='b')
 
     ##### Begin plane fitting
 
-    circle1 = pyrsc.Circle()
-    center, axis, radius, inliers = circle1.fit(points, 1)
-    normal = axis
-
-    print('RANSAC results: ', axis, radius, center, inliers)
-
     # Create the plane object
-    unit_normal = axis / np.linalg.norm(axis)
-    chine_plane = skso.Plane(point=center, normal=axis)
-    chine_plane_best = skso.Plane.best_fit(points)
-    print("best fit", chine_plane_best.normal)
+    chine_plane = skso.Plane.best_fit(points)
     chine_keel_line = chine_plane.intersect_plane(skso.Plane.from_points([0,0,0], [1,0,0], [0,0,1]))
     print("ckl", chine_keel_line)
-    #Use a closer origin point for the plane. Better for graphing.
-    chine_plane = skso.Plane(chine_keel_line.point, chine_plane.normal)
-    chine_sphere = skso.Sphere(center, radius)
 
     chine_plane.plot_3d(axs3d, alpha=.5, lims_x=(0,100), lims_y=(-10, 10))
-    chine_plane_best.plot_3d(axs3d, alpha=.5, lims_x=(0,100), lims_y=(-10, 10))
-
-    print(f"Chine {idx} normal diff", chine_plane_best.normal.angle_between(chine_plane.normal))
-    print(f"Chine {idx} point dist", chine_plane_best.distance_point(chine_plane.point))
 
     ##### End plane fitting
 
     ##### Create a local coordinate system for the plane
-    po, xl, yl = make_coordinate_system(center, axis)
-
-    local_center = global_to_local(center, po, xl, yl)
-    ix1, ix2 = intersect_x_axis_circle(local_center, radius)
+    po, xl, yl = make_coordinate_system(chine_plane.point, chine_plane.normal)
 
     ##### Convert all of the points on this chine to the LCS
-    twodpoints = []
-    twodstations = []
-    threedpoints = []
-    for x in stations:
-        station_plane = skso.Plane(point=(x, 0, 0), normal=(-1, 0, 0))
-        station_line = station_plane.intersect_plane(chine_plane)
-        so = skso.Plane(point=[0,0,0], normal=[0,1,0]).intersect_line(station_line)
-        for point in chine_sphere.intersect_line(station_line):
-            if point[1] >= 0:
-                threedpoints.append(point)
-                twodpoints.append(global_to_local(point, po, xl, yl))
-                twodstations.append(np.array((
-                    global_to_local(so, po, xl, yl),
-                    global_to_local(point, po, xl, yl)
-                )))
+    twodstations = [chine_plane.intersect_plane(skso.Plane(point=[x,0,0], normal=[1,0,0])) for x in stations]
+    threedpoints = chine_plane.project_points(points)
+    twodpoints = skso.Points([global_to_local(point, po, xl, yl) for point in threedpoints])
 
-    threedpoints = skso.Points(threedpoints)
+    circle = skso.Circle.best_fit(twodpoints)
+    local_center = circle.point
+    radius = circle.radius
+
+    center = local_to_global(local_center, po, xl, yl)
+    ix1, ix2 = intersect_x_axis_circle(local_center, radius)
 
 #    twodstations = []
 #    for x in stations[1:-1]:
@@ -197,7 +166,7 @@ for idx in range(len(chinesY)):
     ax.set_ylim((0, 40))
     ax.plot(*zip(*twodpoints), 'ro')
     for station in twodstations:
-        ax.plot(*zip(*station), 'g')
+        station.plot_2d(ax, c='g')
     ax.plot([ix1, ix2], [0, 0], 'ro')
     ax.set_xlim(-10, 400)
     #ax.set_ylim(-5, 40)
