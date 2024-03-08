@@ -13,7 +13,8 @@ from mpl_toolkits.mplot3d import Axes3D
 import math
 from TableOfOffsets import TableOfOffsets
 import pyransac3d as pyrsc
-import Geometry3D
+import skspatial.objects as skso
+from skspatial.plotting import plot_3d
 
 stations = np.loadtxt('SeaBeeStations.csv', delimiter=',')
 chinesY = np.loadtxt('SeaBeeHB.csv', delimiter=',')
@@ -34,13 +35,13 @@ fig3d = plt.figure()
 axs2d = fig2d.subplots(nrows=len(offsets.chines), ncols=1, sharex=True,
                          width_ratios=[1])
 
-axsBottom = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
+axs3d = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
 fig3d.tight_layout()
 
 for frame in offsets.frames:
     for centroid in frame:
-        print(centroid)
-        axsBottom.plot(*centroid, 'bo')
+        #print(centroid)
+        axs3d.plot(*centroid, 'bo')
 
 
 # https://stackoverflow.com/questions/28910718/give-3-points-and-a-plot-circle
@@ -124,13 +125,9 @@ for idx in range(len(chinesY)):
     chineZ = chinesZ[idx]
     print(chineY, chineZ)
     
-    points = np.array([[stations[i], chineY[i], chineZ[i]] for i in range(len(stations))])
+    points = skso.Points([[stations[i], chineY[i], chineZ[i]] for i in range(len(stations))])
 
-    ##### Begin plane fitting. TODO: A more accurate best fit
-    # Pick 3 points
-    p0 = np.array((stations[0], chineY[0], chineZ[0]))
-    p1 = np.array((stations[2], chineY[2], chineZ[2]))
-    p2 = np.array((stations[4], chineY[4], chineZ[4]))
+    ##### Begin plane fitting
 
     circle1 = pyrsc.Circle()
     center, axis, radius, inliers = circle1.fit(points, 1)
@@ -138,18 +135,25 @@ for idx in range(len(chinesY)):
 
     print('RANSAC results: ', axis, radius, center, inliers)
 
-#    # Define the plane containing those points
-    point, normal_old = plane3points(p0, p1, p2)
-#    unit_normal = normal / np.linalg.norm(normal)
+    # Create the plane object
     unit_normal = axis / np.linalg.norm(axis)
-    unit_normal_old = normal_old / np.linalg.norm(normal_old)
+    chine_plane = skso.Plane(point=center, normal=axis)
+    chine_plane_best = skso.Plane.best_fit(points)
+    print("best fit", chine_plane_best.normal)
+    chine_keel_line = chine_plane.intersect_plane(skso.Plane.from_points([0,0,0], [1,0,0], [0,0,1]))
+    print("ckl", chine_keel_line)
+    #Use a closer origin point for the plane. Better for graphing.
+    chine_plane = skso.Plane(chine_keel_line.point, chine_plane.normal)
+    chine_sphere = skso.Sphere(center, radius)
 
-    chine_plane = Geometry3D.Plane(Geometry3D.Point(center[0], center[1], center[2]), Geometry3D.Vector(unit_normal[0], unit_normal[1], unit_normal[2]))
-    print ("chine plane parameters:", chine_plane.parametric())
-#    ##### End plane fitting
-#
-    print(unit_normal, unit_normal_old)
-#
+    chine_plane.plot_3d(axs3d, alpha=.5, lims_x=(0,100), lims_y=(-10, 10))
+    chine_plane_best.plot_3d(axs3d, alpha=.5, lims_x=(0,100), lims_y=(-10, 10))
+
+    print(f"Chine {idx} normal diff", chine_plane_best.normal.angle_between(chine_plane.normal))
+    print(f"Chine {idx} point dist", chine_plane_best.distance_point(chine_plane.point))
+
+    ##### End plane fitting
+
     ##### Create a local coordinate system for the plane
     po, xl, yl = make_coordinate_system(center, axis)
 
@@ -157,33 +161,23 @@ for idx in range(len(chinesY)):
     ix1, ix2 = intersect_x_axis_circle(local_center, radius)
 
     ##### Convert all of the points on this chine to the LCS
-    #TODO: Find nearest point on plane to actual point. Not sure what this actually gives although it looks close
     twodpoints = []
-    for i in range(len(chineY)):
-        centroid = np.array((stations[i],chineY[i],chineZ[i]))
-        twodpoints.append(global_to_local(centroid, po, xl, yl))
-
-    ### Find circle through the three translated points
-    c, r = define_circle(twodpoints[0], twodpoints[math.ceil(len(twodpoints) / 2.0)], twodpoints[-1])
-    print("c,r:",c,r)
-
-    # Convert c to global coords for display
-    C = local_to_global(c, po, xl, yl)
-    print("global center: ", C)
-
-    # Determine station locations as lines on the chine plane
+    twodstations = []
+    threedpoints = []
     for x in stations:
-        station_plane = Geometry3D.Plane(Geometry3D.Point(x, 0, 0), Geometry3D.Vector(1, 0, 0))
-        station_line = station_plane.intersection(chine_plane)
-        so = station_line.intersection(Geometry3D.Plane.xz_plane())
-        print("Station Origin ", so)
-        print("Station Origin Local ", global_to_local(np.array((so.x, so.y, so.z)), po, xl, yl))
-        #TODO: How to intersect line with circle (do it in LCS?). Geometry3D circle is actually a bunch of segments.
-        # Also, how to plot chine line on chine plane diagram
-    
-    nyz = np.array((1, 0, 0))
-    station_vec = nyz * unit_normal
-    print("station_vec:", station_vec)
+        station_plane = skso.Plane(point=(x, 0, 0), normal=(-1, 0, 0))
+        station_line = station_plane.intersect_plane(chine_plane)
+        so = skso.Plane(point=[0,0,0], normal=[0,1,0]).intersect_line(station_line)
+        for point in chine_sphere.intersect_line(station_line):
+            if point[1] >= 0:
+                threedpoints.append(point)
+                twodpoints.append(global_to_local(point, po, xl, yl))
+                twodstations.append(np.array((
+                    global_to_local(so, po, xl, yl),
+                    global_to_local(point, po, xl, yl)
+                )))
+
+    threedpoints = skso.Points(threedpoints)
 
 #    twodstations = []
 #    for x in stations[1:-1]:
@@ -193,12 +187,7 @@ for idx in range(len(chinesY)):
 #            global_to_local(po, np.array((-x, 0, zl)) - station_vec, xl, yl) * np.array((1, -100))
 #        )))
 #    print(twodstations)
-    # Adjust other chine points to intersection of station plane with chine arc
-
-    # Calculate starting point and angle of arc
-    # Starts and ends at points circle intersects local X axis
-    print("ix1, ix2:",ix1,ix2)
-
+                
     c0 = np.array((ix1, 0))
 
 
@@ -206,10 +195,9 @@ for idx in range(len(chinesY)):
     ax = axs2d[idx]
     ax.set_box_aspect(1/10)
     ax.set_ylim((0, 40))
-#    ax.plot(*zip(*twodpoints), 'ro')
-    #ax.plot(*zip(p0a, p1a, p2a), 'ro')
-#    for station in twodstations:
-#        ax.plot(*zip(*station), 'g')
+    ax.plot(*zip(*twodpoints), 'ro')
+    for station in twodstations:
+        ax.plot(*zip(*station), 'g')
     ax.plot([ix1, ix2], [0, 0], 'ro')
     ax.set_xlim(-10, 400)
     #ax.set_ylim(-5, 40)
@@ -224,20 +212,23 @@ for idx in range(len(chinesY)):
     arc_ys = (radius * np.sin(arc_angles)) - abs(local_center[1])
     ax.plot(arc_xs, arc_ys, color = 'c', lw = 3)
 
-#    #3D
-#    for centroid in twodpoints:
-#        print(local_to_global(centroid, po, xl, yl))
-#        axsRight.plot(*local_to_global(centroid, po, xl, yl), 'ro')
-#    axsRight.plot(*local_to_global((ix1, 0), po, xl, yl), 'ro')
-#    axsRight.plot(*local_to_global((ix2, 0), po, xl, yl), 'ro')
-#
-#
+    #3D
+    for point in threedpoints:
+        axs3d.plot(*point, 'ro')
+
+    axs3d.set_zlim3d(bottom=0, top=20)
+    axs3d.set_ylim3d(bottom=0, top=20)
+    axs3d.set_xlim3d(left=50, right=70)
+
     for station_x in offsets._stations:
         station_plane = plane3points(np.array((station_x, 0, 0)), np.array((station_x, 100, 0)), np.array((station_x, 0, 100)))
 
+    print("-" * 10, "Chine", idx, "-" * 10)
+    print(chine_plane.normal)
+    print(points)
+    print(threedpoints)
 
-
-axsBottom.set_aspect('equal')
+axs3d.set_aspect('equal')
 plt.show()
 
 
