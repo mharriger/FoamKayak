@@ -119,24 +119,3 @@ for idx in range(len(chinesY)):
 
 axs3d.set_aspect('equal')
 plt.show()
-
-
-#   3D plot 
-#fig = plt.figure()
-#ax = fig.add_subplot()
-#ax.plot_surface(xx, yy, z)
-#ax.scatter(correctX[1:-1], correctY, correctZ, zdir='z', s=20, c='b',rasterized=True)
-#ax.set_xlim3d(-100,1000)
-#ax.set_ylim3d(-100, 1000)
-#ax.set_zlim3d(-100, 1000)
-#ax.set_xlabel('$x$ (cm)',fontsize=16)
-#ax.set_ylabel('\n$y$ (cm)',fontsize=16)
-#zlabel = ax.set_zlabel('\n$z$ (mm)',fontsize=16)
-
-#ax2 = fig.add_subplot()
-#arr = np.array((p0l, p1l, p2l)).T
-#print(arr)
-#ax2.plot(*arr, 'ro')
-#ax2.set_aspect('equal', 'box')
-plt.show()
-# plt.savefig('steelBallFitted.pdf', format='pdf', dpi=300, bbox_extra_artists=[zlabel], bbox_inches='tight')
