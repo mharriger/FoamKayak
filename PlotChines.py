@@ -12,9 +12,16 @@ import matplotlib.pyplot as plt
 from TableOfOffsets import TableOfOffsets
 import skspatial.objects as skso
 
-stations = np.loadtxt('SeaBeeStations.csv', delimiter=',')
-chinesY = np.loadtxt('SeaBeeHB.csv', delimiter=',')
-chinesZ = np.loadtxt('SeaBeeHAB.csv', delimiter=',')
+KAYAK_NAME = 'SeaBee'
+
+stations = np.loadtxt(f'{KAYAK_NAME}Stations.csv', delimiter=',')
+chinesY = np.loadtxt(f'{KAYAK_NAME}HB.csv', delimiter=',')
+chinesZ = np.loadtxt(f'{KAYAK_NAME}HAB.csv', delimiter=',')
+
+if chinesY.ndim == 1:
+    chinesY.shape = (1, len(chinesY))
+if chinesZ.ndim == 1:
+    chinesZ.shape = (1, len(chinesZ))
 
 offsets = TableOfOffsets(
     stations=list(stations),
@@ -34,7 +41,7 @@ axs3d = fig3d.subplots(nrows=1, ncols=1, subplot_kw={'projection': '3d'})
 fig3d.tight_layout()
 
 def global_to_local(point: skso.Point, origin: skso.Point, u: skso.Vector, v: skso.Vector) -> skso.Point:
-    return np.dot((point - origin), u), np.dot((point - origin), v)
+    return skso.Point((np.dot((point - origin), u), np.dot((point - origin), v)))
 
 def local_to_global(point: skso.Point, origin: skso.Point, u: skso.Vector, v: skso.Vector) -> skso.Point:
     return origin + point[0] * u + point[1] * v
@@ -82,7 +89,10 @@ for idx in range(len(chinesY)):
     ix1, ix2 = circle.intersect_line(skso.Line([0,0], [1,0]))
 
     ##### 2D plot of chine
-    ax = axs2d[idx]
+    if chinesY.shape[0] > 1:
+        ax = axs2d[idx]
+    else:
+        ax = axs2d
     ax.set_box_aspect(1/10)
     ax.set_ylim((0, 40))
     ax.set_xlim(-10, 400)
