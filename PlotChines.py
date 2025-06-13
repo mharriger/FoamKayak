@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from TableOfOffsets import TableOfOffsets
 import skspatial.objects as skso
 
+import wood_shape
+
 KAYAK_NAME = 'SeaBee'
 
 stations = np.loadtxt(f'{KAYAK_NAME}Stations.csv', delimiter=',')
@@ -80,9 +82,15 @@ for idx in range(len(chinesY)):
     local_center = circle.point
     radius = circle.radius
 
+    ##### Use the physical model to model the chine as well
+    phys_model = wood_shape.BentWoodShape(twodpoints, tension=1.0, resolution=100)
+
     ##### Project the 2D points to the circle, then reproject back to 3D space
     points_on_circle = skso.Points([circle.project_point(pt) for pt in twodpoints])
     points_on_circle_3d = skso.Points([local_to_global(pt, *local_coords) for pt in points_on_circle])
+
+    ##### Project the physical model into 3d space
+    phys_model_3d = skso.Points([local_to_global(pt, *local_coords) for pt in phys_model.get_curve_points()])
 
     ##### Find the chine arc endpoints
     center = local_to_global(local_center, *local_coords)
@@ -103,6 +111,7 @@ for idx in range(len(chinesY)):
 
     twodpoints.plot_2d(ax, c='r')
     points_on_circle.plot_2d(ax, c='g')
+    
     for station in twodstations:
         station.plot_2d(ax, c='g', t_1=-20, t_2=20)
 
@@ -112,10 +121,14 @@ for idx in range(len(chinesY)):
     arc_ys = (radius * np.sin(arc_angles)) - abs(local_center[1])
     ax.plot(arc_xs, arc_ys, color = 'c', lw = 3)
 
+    # Draw the physical model
+    skso.Points(phys_model.get_curve_points()).plot_2d(ax, c='m', lw=2, label='Physical Model')
+
     #3D plot of kayak
     points.plot_3d(axs3d, c='b')
     threedpoints.plot_3d(axs3d, c='r')
     points_on_circle_3d.plot_3d(axs3d, c='g')
+    phys_model_3d.plot_3d(axs3d, c='m', lw=2, label='Physical Model')
 
     axs3d.set_zlim3d(bottom=0, top=20)
     axs3d.set_ylim3d(bottom=0, top=20)
@@ -126,6 +139,9 @@ for idx in range(len(chinesY)):
     print(points)
     print(points_on_circle_3d)
     print([skso.Point(x[0]).distance_point(skso.Point(x[1])) for x in zip(points, points_on_circle_3d)])
+    print("Phys model:" , phys_model.get_curve_points())
+
+    phys_model.draw(f'{KAYAK_NAME}_Chine_{idx}.png', width=800, height=600, margin=50)
 
 axs3d.set_aspect('equal')
 plt.show()
