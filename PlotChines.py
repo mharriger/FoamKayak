@@ -10,6 +10,7 @@ sys.path.append("/usr/lib/freecad-python3/lib")
 sys.path.append("/usr/share/freecad/Mod")
 
 import FreeCAD
+import FreeCADGui as Gui
 import PartDesign
 import Part
 
@@ -78,6 +79,23 @@ def interpolateSplineFromPoints(points, feature_name):
     spline_obj.Visibility = True
     return spline_obj
 
+def twoDOffsetSpline(spline_obj, offset_distance, feature_name):
+    offset_obj = FreeCAD.ActiveDocument.addObject("Part::Offset2D", feature_name)
+    offset_obj.Source = spline_obj
+    offset_obj.Value = offset_distance
+    offset_obj.Mode = "Skin"
+    offset_obj.Fill = True
+    return offset_obj
+
+def extrudeProfile(profile_obj, length, feature_name, symmetric=False, reversed=False):
+    extrude_obj = FreeCAD.ActiveDocument.addObject("Part::Extrusion", feature_name)
+    extrude_obj.Base = profile_obj
+    extrude_obj.DirMode = "Normal"
+    extrude_obj.LengthFwd = length
+    extrude_obj.Symmetric = symmetric
+    extrude_obj.Reversed = reversed
+    return extrude_obj
+
 def printPointDistances(points1, points2):
     if len(points1) != len(points2):
         raise ValueError("Point lists must be of the same length")
@@ -122,22 +140,27 @@ for idx in range(len(chinesY)):
 
     ##### add 3D points to the FreeCAD document
     pts = addPointsToDocument(threedpoints, f'Chine{idx+1}')
-    interpolateSplineFromPoints(pts, f'Chine{idx+1}_Spline')
+    spline = interpolateSplineFromPoints(pts, f'Chine{idx+1}_Spline')
+    offset = twoDOffsetSpline(spline, offset_distance=2*25.4, feature_name=f'Chine{idx+1}_Offset')
+    extrude = extrudeProfile(offset, length=0.5*25.4, feature_name=f'Chine{idx+1}_Extrude', symmetric=False)
 
 
 gunwalePoints = skso.Points([[stations[i], gunwaleY[i], gunwaleZ[i]] for i in range(len(stations))])
 gunwale_plane = skso.Plane.best_fit(gunwalePoints)
 gunwalePointsProjected = skso.Points([gunwale_plane.project_point(pt) for pt in gunwalePoints])
 pts = addPointsToDocument(gunwalePointsProjected, 'Gunwale')
-interpolateSplineFromPoints(pts, 'Gunwale_Spline')
-
+spline = interpolateSplineFromPoints(pts, 'Gunwale_Spline')
+offset = twoDOffsetSpline(spline, offset_distance=(2*25.4), feature_name='Gunwale_Offset')
+extrude = extrudeProfile(offset, length=(0.5*25.4), feature_name='Gunwale_Extrude', symmetric=False, reversed=True)
 
 print(f"Gunwale\n{'-' * 20}")
 printPointDistances(gunwalePoints, gunwalePointsProjected)
 
 keelPoints = skso.Points([[stations[i], 0, keelZ[i]] for i in range(len(stations))])
 pts = addPointsToDocument(keelPoints, 'Keel')
-interpolateSplineFromPoints(pts, 'Keel_Spline')
+spline = interpolateSplineFromPoints(pts, 'Keel_Spline')
+offset = twoDOffsetSpline(spline, offset_distance=2*25.4, feature_name='Keel_Offset')
+extrude = extrudeProfile(offset, length=0.5*25.4, feature_name='Keel_Extrude', symmetric=True)
 
 deckridgePoints = skso.Points([[stations[i], 0, deckridgeZ[i]] for i in range(len(stations))])
 addPointsToDocument(deckridgePoints, 'Deckridge')
