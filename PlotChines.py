@@ -206,9 +206,88 @@ offset = twoDOffsetSpline(spline, offset_distance=2*25.4, feature_name='Keel_Off
 extrude = extrudeProfile(offset, length=0.5*25.4, feature_name='Keel_Extrude', symmetric=True)
 
 deckridgePoints = skso.Points([[0, stations[i], deckridgeZ[i]] for i in range(len(stations))])
-addPointsToDocument(deckridgePoints, 'Deckridge')
+def segment_polyline_near_straight(points, max_dev=2.0):
+    """
+    Split an ordered list of 3D points into segments where each segment can be
+    approximated by a straight line within max_dev (same units as points).
 
-#TODO: Make a plane for each station
+    Algorithm (greedy): start at index 0, try to extend the segment as far as
+    possible while all intermediate points' perpendicular distance to the
+    candidate line is <= max_dev. When a point exceeds deviation, end the
+    segment at the previous point and start a new segment.
+    Returns a list of segments, each a list of skspatial Point objects.
+    """
+    if len(points) < 2:
+        return [list(points)]
+
+    segments = []
+    pts = list(points)
+    start = 0
+    while start < len(pts) - 1:
+        end = start + 1
+        # always allow at least one segment of two points
+        while end < len(pts):
+            a = pts[start]
+            b = pts[end]
+            line = skso.Line(a, b - a)
+            exceeded = False
+            # check intermediate points between start and end
+            for k in range(start + 1, end):
+                d = line.distance_point(pts[k])
+                if d > max_dev:
+                    exceeded = True
+                    break
+            if exceeded:
+                break
+            end += 1
+
+        # end is either first bad index or len(pts), segment goes to end-1
+        seg_end = max(start + 1, end - 1)
+        segments.append(pts[start:seg_end + 1])
+        start = seg_end
+
+    return segments
+
+
+# Break the deckridge into near-straight segments and add line segments to document
+deckridge_segments = segment_polyline_near_straight(deckridgePoints, max_dev=2.0)
+for si, seg in enumerate(deckridge_segments):
+    # add endpoints as vertices and a line between them for each segment
+    if len(seg) == 0:
+        continue
+    start_pt = seg[0]
+    end_pt = seg[-1]
+    # create an edge between endpoints
+    edge_obj = doc.addObject("Part::Line", f"Deckridge_S{si+1}_Edge")
+    edge_obj.X1 = start_pt[0]
+    edge_obj.Y1 = start_pt[1]
+    edge_obj.Z1 = start_pt[2]
+    edge_obj.X2 = end_pt[0]
+    edge_obj.Y2 = end_pt[1]
+    edge_obj.Z2 = end_pt[2]
+
+    edge_obj2 = doc.addObject("Part::Line", f"Deckridge_S{si+1}_Edge2")
+    edge_obj2.X1 = start_pt[0]
+    edge_obj2.Y1 = start_pt[1]
+    edge_obj2.Z1 = start_pt[2] - (2 * 25.4)
+    edge_obj2.X2 = end_pt[0]
+    edge_obj2.Y2 = end_pt[1]
+    edge_obj2.Z2 = end_pt[2] - (2 * 25.4)
+
+    doc.recompute()
+    face_obj = doc.addObject("Part::RuledSurface", f"Deckridge_S{si+1}_Face")
+    face = Part.makeRuledSurface(edge_obj.Shape, edge_obj2.Shape)
+    face_obj.Curve1 = edge_obj
+    face_obj.Curve2 = edge_obj2
+    face_obj.Shape = face
+    extrude_obj = extrudeProfile(face_obj, length=(0.5*25.4), feature_name=f"Deckridge_S{si+1}_Extrude", symmetric=False, reversed=False)
+
+###TODO: Extrapolate deckridge to bow and stern
+###TODO: Model desired curve between keel, chines, and gunwale
+###TODO: Create a notch in each stringer at each station location of the same width as the frame + a small tolerance for fit
+###TODO: Intersect the station planes with the stringers and modeled curves to get frame shapes
+###TODO: Stringer puzzle joints
+
 for station in stations:
     station_plane = FreeCAD.ActiveDocument.addObject("Part::Plane", f"StationPlane_{station}")
     station_plane.Length = 2000  # large enough to cover the model
