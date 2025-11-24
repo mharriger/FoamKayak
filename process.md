@@ -1,66 +1,157 @@
-## Process
-Given a table of offsets representing the Height Above Baseline (HAB) and Half-Breadth (HB) of the keel, chines, gunwale, and deckridge of a kayak at defined station distances along the length of the kayak. Treat the HAB as the Z dimension, HB as the X dimension, and the station distamce as the Y dimension.
+# Kayak Frame Generation Process — Formal Specification
 
-Additional inputs are:
-1. Frame material thickness
-2. Keel frame width
-3. Transverse frame width
+This document defines the computational procedure for generating kayak frames from a table of offsets. All geometric operations use a right-handed coordinate system:
 
-### Define stringer shapes
-#### Chines and gunwale
-1. Find the plane that best fits the (X,Y,Z) 3d points for that chine or gunwale.
-2. Project each of those points to the best-fit plane.
-3. Calculate the distance between each original on projected point and ensure it is within a reasonable tolerance (1mm?)
-4. Find the arc that best fits the points
-5. find the points where that arc would intersect the YZ plane.These are the bow and stern endpoints for that chine/gunwale. Add them to the list of points.
-6. Interpolate a minimum-energy b-spline through the points
+- **X** = Half-Breadth (HB; positive to starboard, negative to port)
+- **Y** = Station distance along kayak length (positive toward stern)
+- **Z** = Height Above Baseline (HAB)
 
-#### Keel
-1. Find  the arc that best fits the keel points
-2. Find where that arc intersects the best-fit plane of the chine with the lowest Z values. These are the endpoints of the keel.
-3. Add those endpoints to the list of keel points
-4. Interpolate a minimum-energy b-spline through those points
+All input points are expressed as (X, Y, Z).
 
-#### Deckridge
-1. Find the two nearly-linear segments starting from the bow and stern of the kayak
-2. For each segment, extrapolate to where it has the same y-value as the first and/or last point of the gunwale
-3. Add those points to the appropriate deckridge segment
-4. Represent each deckridge segment as a straight line between the first and last points of that segment.
+## 1. Inputs
 
-### Draw transverse frames
-1. Define a plane parallel to the XZ plane at the station distance
-2. Find the intersection of each chine, the gunwale, the keel, and the deckridge with that plane
-3. Draw a horizontal line rightward starting at (0, keel HAB at station + keel_frame_width) with to (0.25 * material_thickness, keel HAB at station + keel frame width)
-4. Draw a vertical line downward with length keel_frame_width - 0.25 * material_thickness
-5. Construct a line indicating the intersection of chine_plane_n with the station plane. Construct a line that is 0.25 * material_thickness along this line toward the vertical axis, perpendicular to the chine plane line. Call this chine_n_inset_line.
-6. Find the point that is 0.25 * material_thickness along chine_n_inset_line, toward the X axis.
-7. Draw an arc from the endpoint of the line in step 4 to the point found in step 6
-8. Draw a line parallel to the chine plane instersection line, with length chine_depth - 0.25 * material_thickness, toward the Y axis.
-9. Draw a line parallel to chine_n_inset_line, with length material_thickness, away from the X and Y axes.
-10. Draw a line parallel to chine plane intersection line, with length chine_depth - 0.25 * material_thickness, away from the Y axis.
-11. Repeat 5 - 10 for each additional chine.
-12. Perform 5 - 9 for the gunwale
-13. Draw a line to (deckridge HB at station + 0.5 * material*thickness, deckridge HAB at station).
-14. Draw a vertical line downward of length deckridge_frame_width - 0.25 * material_thickness
-15. Draw a horizontal line to the left of length material_thickness. If the line intersects the Y axis, end the line at the Y axis.
-16. If the line did not intersect the Y axis, draw a vertical line upward of length deckridge_material_frame_width - 0.25 * material_thickness
-17. If currently at x > 0, draw a horizontal line to the left until intersecting the Y axis.
-18. Mirror all of the lines drawn above across the Y axis.
+### 1.1 Offset Table
+A set of offset points for these longitudinal members:
 
-### Draw keel/deckridge frame
-1. Find the greater of the Z-value of the gunwale spline or the deckridge line segment at the bow Y-value (where the gunwale spline intersects the YZ plane)
-2. Do the same for the stern
-3. The outline of the keel/deckridge frame consists of the first deckridge segment, a line from the bow point found in step 1 to the endpoint of the keel spline, the keel spline, a line from the other endpoint of the keel spline to the stern endpont from step 2, the second deckridge line segment and the extrapolation of that line forward to the global y-value of the rearmost point of the first deckridge segment, then vertically to connect with the first deckridge segment.
-4. For the inner outline of the frame, make an offset of the outer outline toward the inside. Offset by a configurable distance.
-5. Draw a rectangular notch centered at each station location in the top edge of both the upper and lower parts of the frame. The notch is material_thickness + slot_tolerance wide and 1/2 frame_thickness - 0.25 * material_thickness deep
+- Keel
+- Chines (one or more)
+- Gunwale
+- Deckridge
 
-### Draw stringer shapes
-1. For each chine and the gunwale, draw the b-spline for that item in the plane for that item. That is, draw it as a 2D curve in its plane.
-2. Offset the b-spline by chine_thicknedd or gunwale_thickness toward the inside of the b-spline curve
-3. find the intersection of the YZ plane with the chine/gunwale plane. Draw this line in the two locations where it connects the b-spline curve to the offset one.
-4. Find the intersecton of each station plane with this chine/gunwale plane. Draw a rectangular notch centered on each intersection line, with width material_thickness + slot_tolerance, and depth 1/2 frame_thickness - 0.25 * material_thickness
+Each member has one point per defined station: (HB, station distance, HAB).
 
-### Outputs to save
-1. B-splines of each chine, the gunwale, keel. Plane (point + normal) for each chine and gunwale. Deckridge line segments. (Format TBD)
-2. SVG for each station
-3. SVG for keel/deckridge unit, each chine, and gunwale
+### 1.2 Configuration Parameters
+- `material_thickness`
+- `keel_frame_width`
+- `deckridge_frame_width`
+- `chine_frame_width[n]`
+- `slot_tolerance`
+- `stringer_thickness`
+- Tolerance for geometric planarity checks (default: 1 mm)
+
+## 2. Stringer Shape Construction
+
+### 2.1 Chines and Gunwale
+Steps performed independently for each chine and for the gunwale:
+
+1. **Compute best-fit plane** for that member using a least-squares fit.
+2. **Project points to that plane**.
+3. **Validate planarity**: ensure each point is within tolerance of the plane.
+4. **Fit a circular arc** to the projected points.
+5. **Determine extended endpoints**: intersect the fitted arc with the global **YZ plane (X = 0)**; add both intersection points.
+6. **Generate a minimum-energy B-spline** through the points (endpoints included), ordered by Y.
+7. Store:
+   - plane origin and normal  
+   - spline control points  
+   - endpoints in 3D
+
+### 2.2 Keel
+1. Fit a circular arc to the raw keel points.
+2. Identify the plane of the chine with the lowest Z-values.
+3. Intersect the keel arc with that chine plane to obtain extended bow and stern endpoints.
+4. Build a minimum-energy B-spline using the original + extended endpoints.
+
+### 2.3 Deckridge
+1. Identify two approximately linear point sequences starting at bow and stern.
+2. Extrapolate each sequence to the Y-values of the gunwale’s first/last points.
+3. Represent each as a straight line segment.
+
+## 3. Transverse Frame Generation (Per Station)
+
+For each station at `Y = Y_s`:
+
+### 3.1 Define Station Plane
+Plane S: all points where Y = Y_s.
+
+### 3.2 Compute Intersections
+Intersect S with:
+- each chine spline  
+- gunwale spline  
+- keel spline  
+- deckridge line segments  
+
+Store resulting positions.
+
+### 3.3 Construct Frame Geometry (Starboard Side Only)
+
+#### 3.3.1 Keel Block
+1. Draw a horizontal line from:
+   `(X = 0, Z = keel_point.Z + keel_frame_width)`
+   to `(X = 0.25 * material_thickness, same Z)`.
+2. From that endpoint draw a vertical line downward:
+   length = `keel_frame_width − 0.25 * material_thickness`.
+
+#### 3.3.2 Chines (Repeat for Each Chine)
+Given chine n:
+
+5. Compute the intersection line of chine-plane with station plane.
+6. **Construct an inset line perpendicular to that intersection line**, lying in the station plane.
+7. **Offset by 0.5 × material_thickness along this inset line, toward the global X and Y axes**, generating the chine offset point.
+8. Draw an arc from the keel vertical-line endpoint (step 2 above) to this chine offset point.
+9. Draw a line parallel to the chine-plane intersection line:
+   length = `chine_frame_width[n] − 0.25 * material_thickness`, toward +Y.
+10. Draw a perpendicular line of length `material_thickness`, away from +X and +Y.
+11. Draw another line parallel to step 9 in the opposite Y direction.
+
+#### 3.3.3 Gunwale
+12. Repeat steps analogous to 3.3.2 (using the gunwale point and `stringer_thickness`).
+
+#### 3.3.4 Deckridge
+13. Draw horizontal line to:
+    `(X = deckridge_point.X + 0.5 * material_thickness, Z = deckridge_point.Z)`
+14. Draw vertical line downward:  
+    `deckridge_frame_width − 0.25 * material_thickness`
+15. Draw horizontal line left:  
+    length = `material_thickness` (stop at X = 0 if reached)
+16. If still not on X = 0, draw vertical line upward:  
+    `deckridge_frame_width − 0.25 * material_thickness`
+17. If still not on X = 0, draw horizontal line to X = 0.
+
+### 3.3.5 Mirror
+18. Mirror all geometry across X = 0 (the Y-axis) to create port side.
+
+## 4. Keel/Deckridge Master Frame
+
+1. At the bow station where the gunwale spline intersects the YZ plane, compute  
+   `Z_bow = max(Z_gunwale, Z_deckridge)`.
+2. Do the same at the stern.
+3. Build outline in this order:
+   - Bow deckridge line segment  
+   - Line from bow point to bow endpoint of keel spline  
+   - Keel spline  
+   - Line from stern endpoint of keel spline to stern deckridge point  
+   - Stern deckridge segment  
+   - Extrapolation to meet Y of the forward end of first deckridge segment  
+   - Vertical line connecting both segments
+4. Offset inward by `frame_offset_distance` to form inner outline.
+5. At each station position, cut a centered rectangular notch:
+   width = `material_thickness + slot_tolerance`  
+   depth = `0.5 * frame_thickness − 0.25 * material_thickness`.
+
+## 5. Stringer Cut Shapes
+
+For each chine and gunwale:
+
+1. Draw the B-spline in its own plane as a 2D curve.
+2. Offset inward by `stringer_thickness`.
+3. Find the intersection of YZ plane with the stringer plane and draw connector lines between inner and outer curves.
+4. For each station:
+   - intersect station plane with stringer plane  
+   - cut a centered rectangular notch:  
+     width = `material_thickness + slot_tolerance`  
+     depth = `0.5 * frame_thickness − 0.25 * material_thickness`.
+
+## 6. Outputs
+
+### 6.1 Data
+- Spline definitions for each chine and gunwale  
+- Spline for keel  
+- Deckridge segments  
+- Associated planes for each member
+
+### 6.2 SVG
+- One SVG per station  
+- One SVG each for:
+  - keel/deckridge frame  
+  - each chine stringer  
+  - gunwale stringer
